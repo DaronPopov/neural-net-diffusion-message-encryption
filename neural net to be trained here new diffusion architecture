@@ -1,0 +1,134 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+
+# Define the Encryption Network (Diffusion Model)
+class EncryptionModel(nn.Module):
+    def __init__(self):
+        super(EncryptionModel, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(128, 256),
+            nn.ReLU(),
+            nn.Linear(256, 512),
+            nn.ReLU(),
+            nn.Linear(512, 1024),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        return self.encoder(x)
+
+
+# Define the Decryption Network (Reverse Diffusion Model)
+class DecryptionModel(nn.Module):
+    def __init__(self):
+        super(DecryptionModel, self).__init__()
+        self.decoder = nn.Sequential(
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        return self.decoder(x)
+
+
+# Convert text to binary
+def text_to_binary_fixed(text):
+    return ''.join(format(ord(c), '08b') for c in text)
+
+
+# Convert binary to text
+def binary_to_text(binary_str):
+    text = ''
+    for i in range(0, len(binary_str), 8):
+        byte = binary_str[i:i + 8]
+        text += chr(int(byte, 2))
+    return text.strip()
+
+
+# Function to split text into chunks of specified length
+def split_text_to_chunks(text, chunk_size):
+    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+# Encrypt a single chunk of text
+def encrypt_chunk(encryption_model, chunk):
+    chunk_binary = text_to_binary_fixed(chunk).ljust(128, '0')
+    chunk_tensor = torch.FloatTensor([int(bit) for bit in chunk_binary])
+    encrypted_chunk = encryption_model(chunk_tensor).detach().numpy()
+    return encrypted_chunk
+
+# Decrypt a single chunk of encrypted data
+def decrypt_chunk(decryption_model, encrypted_chunk):
+    chunk_tensor = torch.FloatTensor(encrypted_chunk)
+    decrypted_chunk_tensor = decryption_model(chunk_tensor).detach()
+    decrypted_chunk_binary = ''.join(['1' if x > 0.5 else '0' for x in decrypted_chunk_tensor.numpy()])
+    decrypted_chunk = binary_to_text(decrypted_chunk_binary)
+    return decrypted_chunk
+
+# Full message encryption
+def encrypt_message_full(encryption_model, message_text):
+    chunks = split_text_to_chunks(message_text, 16)  # 16 characters = 128 bits
+    encrypted_chunks = [encrypt_chunk(encryption_model, chunk) for chunk in chunks]
+    return encrypted_chunks
+
+# Full message decryption
+def decrypt_message_full(decryption_model, encrypted_chunks):
+    decrypted_chunks = [decrypt_chunk(decryption_model, chunk) for chunk in encrypted_chunks]
+    decrypted_message = ''.join(decrypted_chunks)
+    return decrypted_message.strip()
+
+# Main function to train models, encrypt, and decrypt a message
+def process_message(initial_message):
+    # Training the neural networks
+    def train_models(message_text):
+        encryption_model = EncryptionModel()
+        decryption_model = DecryptionModel()
+        criterion = nn.MSELoss()
+        optimizer_enc = optim.Adam(encryption_model.parameters(), lr=0.001)
+        optimizer_dec = optim.Adam(decryption_model.parameters(), lr=0.001)
+
+        message_chunks = split_text_to_chunks(message_text, 16)
+        message_binary = [text_to_binary_fixed(chunk).ljust(128, '0') for chunk in message_chunks]
+        message_tensors = [torch.FloatTensor([int(bit) for bit in binary]) for binary in message_binary]
+
+        num_epochs = 100
+        for epoch in range(num_epochs):
+            total_loss = 0
+            for message in message_tensors:
+                encrypted_message = encryption_model(message)
+                decrypted_message = decryption_model(encrypted_message)
+                loss = criterion(decrypted_message, message)
+                optimizer_enc.zero_grad()
+                optimizer_dec.zero_grad()
+                loss.backward()
+                optimizer_enc.step()
+                optimizer_dec.step()
+                total_loss += loss.item()
+
+            if epoch % 10 == 0:
+                print(f'Epoch {epoch}/{num_epochs}, Loss: {total_loss / len(message_tensors)}')
+
+        return encryption_model, decryption_model
+
+    # Train the models
+    encryption_model, decryption_model = train_models(initial_message)
+
+    # Encrypt and decrypt the initial message
+    encrypted_message_full = encrypt_message_full(encryption_model, initial_message)
+    decrypted_message_full = decrypt_message_full(decryption_model, encrypted_message_full)
+
+    print("Original Message:", initial_message)
+    print("Decrypted Message:", decrypted_message_full)
+
+    return decrypted_message_full
+
+# Example usage
+initial_message = "hello what uis up"
+process_message(initial_message)
+
+
